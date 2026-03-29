@@ -1,0 +1,22 @@
+{
+  "name": "巧克力服铁路线路图 Chocolate Server Railway Map",
+  "short_name": "巧克力服铁路线路图",
+  "description": "巧克力服务器铁路线路图，展示了服务器内的铁路网络和站点信息。",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#1e3c72",
+  "theme_color": "#ff9800",
+  "icons": [
+    {
+      "src": "/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png"
+    },
+    {
+      "src": "/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
+  ]
+}

@@ -4,6 +4,12 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>巧克力服铁路线路图 Chocolate Server Railway Map</title>
+    <link rel="manifest" href="/manifest.json">
+    <meta name="theme-color" content="#ff9800">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <meta name="apple-mobile-web-app-title" content="巧克力铁路图">
+    <link rel="apple-touch-icon" href="/icon-192.png">
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
     <style>
         * { box-sizing: border-box; font-family: system-ui, 'Segoe UI', 'Microsoft YaHei', sans-serif; }
@@ -35,6 +41,11 @@
         .map-controls { margin-top: 8px; display: flex; justify-content: space-between; align-items: center; }
         .dimension-bar { background: #e0e7ff; padding: 8px 12px; border-radius: 40px; display: inline-flex; gap: 8px; align-items: center; margin-bottom: 12px; }
         .dimension-bar select { padding: 4px 8px; border-radius: 20px; border: 1px solid #ccc; }
+        .aux-controls { background: #f8f9fa; border-radius: 12px; padding: 8px 12px; margin-bottom: 12px; display: flex; flex-wrap: wrap; gap: 12px; align-items: center; }
+        .aux-controls label { margin-left: 8px; margin-right: 12px; }
+        .coord-input { display: inline-flex; gap: 8px; align-items: center; }
+        .coord-input input { width: 80px; padding: 4px 8px; border-radius: 16px; border: 1px solid #ccc; }
+        #coordDisplay { background: #e9ecef; border-radius: 20px; padding: 4px 12px; font-size: 12px; }
     </style>
 </head>
 <body>
@@ -56,6 +67,22 @@
                     <option value="异次元">异次元</option>
                 </select>
                 <button id="refreshBtn">切换</button>
+            </div>
+            <!-- 新增辅助控件栏 -->
+            <div class="aux-controls">
+                <label>
+                    <input type="checkbox" id="showGridCheckbox"> 显示坐标网格
+                </label>
+                <label>
+                    <input type="checkbox" id="showAxesCheckbox"> 显示坐标轴
+                </label>
+                <div class="coord-input">
+                    <span>跳转到：</span>
+                    <input type="number" id="jumpX" placeholder="X" value="0">
+                    <input type="number" id="jumpZ" placeholder="Z" value="0">
+                    <button id="jumpBtn">跳转</button>
+                </div>
+                <div id="coordDisplay">点击地图显示坐标</div>
             </div>
             <div class="svg-container" id="svgWrapper">
                 <svg id="subwayMap" width="100%" height="100%"></svg>
@@ -129,6 +156,10 @@
     let startPoint = { x: 0, y: 0 };
     let startViewBox = { x: 0, y: 0 };
 
+    // 新增：辅助元素状态
+    let showGrid = false;
+    let showAxes = false;
+
     function showModal(title, bodyHtml, onConfirm) {
         const modal = document.getElementById('modal');
         const modalBody = document.getElementById('modalBody');
@@ -146,16 +177,84 @@
     }
     function closeModal() { document.getElementById('modal').style.display = 'none'; }
 
-    // 核心修改：加载数据前清空旧数据，确保切换维度后地图清空
+    // 绘制辅助元素（网格和坐标轴）
+    function drawAuxiliaryElements() {
+        if (!svg) return;
+        // 如果不需要显示，则直接返回（但为了不覆盖原有内容，我们不在 renderMap 中清空，而是先绘制辅助再绘制其他）
+        // 注意：此函数会在 renderMap 开始时被调用，并且会先清空 svg，所以我们在 renderMap 中先调用本函数，再绘制线路和站点
+        if (!showGrid && !showAxes) return;
+
+        // 计算网格间距（根据视图范围动态调整，避免过密）
+        let step = 100;
+        const range = Math.max(viewBox.width, viewBox.height);
+        if (range > 2000) step = 500;
+        else if (range > 1000) step = 200;
+        else if (range > 500) step = 100;
+        else step = 50;
+
+        const startX = Math.floor(viewBox.x / step) * step;
+        const startZ = Math.floor(viewBox.y / step) * step;
+        const endX = viewBox.x + viewBox.width;
+        const endZ = viewBox.y + viewBox.height;
+
+        // 网格线
+        if (showGrid) {
+            for (let x = startX; x <= endX; x += step) {
+                const line = document.createElementNS('http://www.w3.org/2000/svg', 'line');
+                line.setAttribute('x1', x);
+                line.setAttribute('y1', viewBox.y);
+                line.setAttribute('x2', x);
+                line.setAttribute('y2', viewBox.y + viewBox.height);
+                line.setAttribute('stroke', '#ccc');
+                line.setAttribute('stroke-width', '0.5');
+                line.setAttribute('stroke-dasharray', '4 4');
+                svg.appendChild(line);
+            }
+            for (let z = startZ; z <= endZ; z += step) {
+                const line = document.createElementNS('http://www.w3.org/2000/svg', 'line');
+                line.setAttribute('x1', viewBox.x);
+                line.setAttribute('y1', z);
+                line.setAttribute('x2', viewBox.x + viewBox.width);
+                line.setAttribute('y2', z);
+                line.setAttribute('stroke', '#ccc');
+                line.setAttribute('stroke-width', '0.5');
+                line.setAttribute('stroke-dasharray', '4 4');
+                svg.appendChild(line);
+            }
+        }
+
+        // 坐标轴
+        if (showAxes) {
+            // X轴 (Z=0) 用红色
+            if (0 >= viewBox.y && 0 <= viewBox.y + viewBox.height) {
+                const xAxis = document.createElementNS('http://www.w3.org/2000/svg', 'line');
+                xAxis.setAttribute('x1', viewBox.x);
+                xAxis.setAttribute('y1', 0);
+                xAxis.setAttribute('x2', viewBox.x + viewBox.width);
+                xAxis.setAttribute('y2', 0);
+                xAxis.setAttribute('stroke', '#f44336');
+                xAxis.setAttribute('stroke-width', '2');
+                svg.appendChild(xAxis);
+            }
+            // Z轴 (X=0) 用蓝色
+            if (0 >= viewBox.x && 0 <= viewBox.x + viewBox.width) {
+                const zAxis = document.createElementNS('http://www.w3.org/2000/svg', 'line');
+                zAxis.setAttribute('x1', 0);
+                zAxis.setAttribute('y1', viewBox.y);
+                zAxis.setAttribute('x2', 0);
+                zAxis.setAttribute('y2', viewBox.y + viewBox.height);
+                zAxis.setAttribute('stroke', '#2196f3');
+                zAxis.setAttribute('stroke-width', '2');
+                svg.appendChild(zAxis);
+            }
+        }
+    }
+
+    // 加载数据前清空旧数据，确保切换维度后地图清空
     async function loadData() {
-        // 先清空现有数据，避免残留
         stations = [];
         lines = [];
-        // 清空 SVG，立即显示空白（避免用户看到旧图）
-        if (svg) {
-            svg.innerHTML = '';
-        }
-        // 同时清空管理列表
+        if (svg) svg.innerHTML = '';
         const stationListAdmin = document.getElementById('stationListAdmin');
         if (stationListAdmin) stationListAdmin.innerHTML = '';
         const lineListAdmin = document.getElementById('lineListAdmin');
@@ -192,9 +291,12 @@
 
     function renderMap() {
         if (!svg) svg = document.getElementById('subwayMap');
+        svg.innerHTML = '';
+        // 先绘制辅助元素（网格、坐标轴）
+        drawAuxiliaryElements();
+
         if (!stations.length) {
-            // 无数据时保持空白，不清除 viewBox 以免缩放失效
-            svg.innerHTML = '';
+            // 无数据时只显示辅助元素（如果有）
             return;
         }
 
@@ -217,7 +319,7 @@
             };
             updateViewBox();
         }
-        svg.innerHTML = '';
+
         const linesGroup = document.createElementNS('http://www.w3.org/2000/svg', 'g');
         const stationsGroup = document.createElementNS('http://www.w3.org/2000/svg', 'g');
         lines.forEach(line => {
@@ -300,6 +402,8 @@
             viewBox.width = newWidth;
             viewBox.height = newHeight;
             updateViewBox();
+            // 缩放后重绘辅助元素和地图（为了性能，仅重绘辅助元素和地图）
+            renderMap();
         });
         container.addEventListener('mousedown', (e) => {
             if (e.target === svg || e.target.closest('svg')) {
@@ -319,10 +423,25 @@
             viewBox.x = startViewBox.x - dx * scaleX;
             viewBox.y = startViewBox.y - dy * scaleY;
             updateViewBox();
+            renderMap();
         });
         window.addEventListener('mouseup', () => { isPanning = false; container.style.cursor = 'grab'; });
+
+        // 添加点击事件获取坐标
+        svg.addEventListener('click', (e) => {
+            const rect = svg.getBoundingClientRect();
+            const mouseX = e.clientX - rect.left;
+            const mouseY = e.clientY - rect.top;
+            const scaleX = viewBox.width / rect.width;
+            const scaleY = viewBox.height / rect.height;
+            const worldX = viewBox.x + mouseX * scaleX;
+            const worldZ = viewBox.y + mouseY * scaleY;
+            document.getElementById('coordDisplay').innerHTML = `点击坐标: X=${worldX.toFixed(1)}, Z=${worldZ.toFixed(1)}`;
+        });
     }
-    function updateViewBox() { svg.setAttribute('viewBox', `${viewBox.x} ${viewBox.y} ${viewBox.width} ${viewBox.height}`); }
+    function updateViewBox() {
+        svg.setAttribute('viewBox', `${viewBox.x} ${viewBox.y} ${viewBox.width} ${viewBox.height}`);
+    }
 
     async function planRoute() {
         const start = document.getElementById('startStation').value.trim();
@@ -633,6 +752,23 @@
         await loadData();
     }
 
+    // 跳转到指定坐标
+    function jumpToCoordinate() {
+        let x = parseFloat(document.getElementById('jumpX').value);
+        let z = parseFloat(document.getElementById('jumpZ').value);
+        if (isNaN(x)) x = 0;
+        if (isNaN(z)) z = 0;
+        // 将视图中心移动到 (x, z)，保持缩放不变
+        const container = document.getElementById('svgWrapper');
+        const rect = container.getBoundingClientRect();
+        const scaleX = viewBox.width / rect.width;
+        const scaleY = viewBox.height / rect.height;
+        viewBox.x = x - (rect.width / 2) * scaleX;
+        viewBox.y = z - (rect.height / 2) * scaleY;
+        updateViewBox();
+        renderMap();
+    }
+
     function bindEvents() {
         document.getElementById('planBtn').onclick = planRoute;
         document.getElementById('refreshBtn').onclick = changeDimension;
@@ -645,6 +781,19 @@
         document.getElementById('orderLineBtn').onclick = orderLine;
         document.getElementById('addOperatorBtn').onclick = addOperator;
         document.getElementById('deleteOperatorBtn').onclick = deleteOperator;
+        document.getElementById('jumpBtn').onclick = jumpToCoordinate;
+
+        // 复选框事件
+        const gridCheck = document.getElementById('showGridCheckbox');
+        const axesCheck = document.getElementById('showAxesCheckbox');
+        gridCheck.addEventListener('change', (e) => {
+            showGrid = e.target.checked;
+            renderMap();
+        });
+        axesCheck.addEventListener('change', (e) => {
+            showAxes = e.target.checked;
+            renderMap();
+        });
     }
 
     async function init() {
@@ -656,6 +805,15 @@
         bindEvents();
     }
     init();
+</script>
+
+<script>
+  // Service Worker 注册（PWA）
+  if ('serviceWorker' in navigator) {
+    navigator.serviceWorker.register('/sw.js')
+      .then(reg => console.log('SW registered:', reg))
+      .catch(err => console.error('SW registration failed:', err));
+  }
 </script>
 </body>
 </html>
