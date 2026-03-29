@@ -1,0 +1,661 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>巧克力服铁路线路图 Chocolate Server Railway Map</title>
+    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+    <style>
+        * { box-sizing: border-box; font-family: system-ui, 'Segoe UI', 'Microsoft YaHei', sans-serif; }
+        body { margin: 0; background: #f0f2f5; padding: 20px; overflow: hidden; height: 100vh; }
+        .container { max-width: 1400px; margin: 0 auto; background: white; border-radius: 24px; box-shadow: 0 8px 20px rgba(0,0,0,0.1); display: flex; flex-direction: column; height: calc(100vh - 40px); }
+        header { background: #1e3c72; color: white; padding: 16px 24px; display: flex; justify-content: space-between; align-items: center; border-radius: 24px 24px 0 0; }
+        h1 { margin: 0; font-size: 1.6rem; }
+        .main { display: flex; flex: 1; min-height: 0; }
+        .map-panel { flex: 3; background: #e9ecef; padding: 20px; border-right: 1px solid #ddd; display: flex; flex-direction: column; overflow: hidden; }
+        .sidebar { flex: 1.2; min-width: 280px; padding: 20px; background: #fafbfc; overflow-y: auto; }
+        .svg-container { background: #fefefe; border-radius: 20px; box-shadow: 0 2px 8px rgba(0,0,0,0.05); overflow: hidden; flex: 1; position: relative; cursor: grab; }
+        .svg-container:active { cursor: grabbing; }
+        svg { width: 100%; height: 100%; display: block; }
+        .tooltip { position: fixed; background: rgba(0,0,0,0.85); color: white; padding: 8px 14px; border-radius: 12px; font-size: 13px; pointer-events: none; z-index: 1000; white-space: nowrap; backdrop-filter: blur(4px); }
+        .plan-form, .admin-form { background: white; border-radius: 20px; padding: 16px; margin-bottom: 24px; box-shadow: 0 1px 4px rgba(0,0,0,0.08); }
+        .plan-form input, .admin-form input, .admin-form select { width: 100%; padding: 8px 12px; margin: 8px 0; border: 1px solid #ccc; border-radius: 20px; }
+        .result { background: #e3f2fd; border-radius: 16px; padding: 12px; margin-top: 12px; font-size: 14px; }
+        .item-list { max-height: 200px; overflow-y: auto; margin-bottom: 12px; border: 1px solid #e0e0e0; border-radius: 12px; padding: 4px; }
+        .station-item, .line-item, .operator-item { background: white; border-radius: 8px; padding: 6px 10px; margin-bottom: 6px; border: 1px solid #e0e0e0; display: flex; justify-content: space-between; align-items: center; }
+        .small-btn { background: #e0e0e0; padding: 2px 8px; font-size: 11px; margin-left: 6px; }
+        .danger { background: #f44336; color: white; }
+        .modal { display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.5); justify-content: center; align-items: center; z-index: 2000; }
+        .modal-content { background: white; padding: 24px; border-radius: 28px; width: 500px; max-width: 90%; max-height: 80vh; overflow-y: auto; }
+        .modal-content input, .modal-content select { width: 100%; margin: 8px 0; padding: 8px; }
+        .close { float: right; cursor: pointer; font-size: 24px; }
+        .modal-footer { margin-top: 16px; text-align: right; }
+        .section-title { font-weight: bold; margin: 12px 0 8px; color: #1e3c72; }
+        .color-preview { width: 16px; height: 16px; display: inline-block; margin-right: 6px; border-radius: 2px; }
+        .map-controls { margin-top: 8px; display: flex; justify-content: space-between; align-items: center; }
+        .dimension-bar { background: #e0e7ff; padding: 8px 12px; border-radius: 40px; display: inline-flex; gap: 8px; align-items: center; margin-bottom: 12px; }
+        .dimension-bar select { padding: 4px 8px; border-radius: 20px; border: 1px solid #ccc; }
+    </style>
+</head>
+<body>
+<div class="container">
+    <header>
+        <h1>巧克力服铁路线路图 Chocolate Server Railway Map</h1>
+        <div style="font-size: 14px;">💡 所有人都可自由编辑，无需审核。为了延续这个规则，当你在编辑时，我们请求你不要随意修改<br>
+        ℹ️ 由于服务器铁路众多，我们希望你能够添加你所知道的铁路！</div>
+    </header>
+    <div class="main">
+        <div class="map-panel">
+            <div class="dimension-bar">
+                <span>🌍 维度（切换之后一定要点切换！不然不起作用）：</span>
+                <select id="dimensionSelect">
+                    <option value="主世界">主世界</option>
+                    <option value="下界">下界</option>
+                    <option value="末地">末地</option>
+                    <option value="资源世界">资源世界</option>
+                    <option value="异次元">异次元</option>
+                </select>
+                <button id="refreshBtn">切换</button>
+            </div>
+            <div class="svg-container" id="svgWrapper">
+                <svg id="subwayMap" width="100%" height="100%"></svg>
+            </div>
+            <div class="map-controls">
+                <span>💡 鼠标滚轮缩放 | 拖拽平移 | 悬停查看详情 | by woshiikun_1145 | Version 032804</span>
+            </div>
+        </div>
+        <div class="sidebar">
+            <div class="plan-form">
+                <h3>🗺️ 路线规划</h3>
+                <input type="text" id="startStation" placeholder="起点站名" list="stationList">
+                <input type="text" id="endStation" placeholder="终点站名" list="stationList">
+                <datalist id="stationList"></datalist>
+                <button id="planBtn">规划路线</button>
+                <div id="planResult" class="result"></div>
+            </div>
+
+            <div class="admin-form">
+                <h3>🔧 管理工具</h3>
+                <div class="section-title">📌 站点管理</div>
+                <div id="stationListAdmin" class="item-list"></div>
+                <div style="margin-bottom:12px;">
+                    <button id="addStationBtn">➕ 添加站点</button>
+                    <button id="editStationBtn">✏️ 编辑站点</button>
+                    <button id="deleteStationBtn">🗑️ 删除站点</button>
+                </div>
+                <div class="section-title">🟢 线路管理</div>
+                <div id="lineListAdmin" class="item-list"></div>
+                <div style="margin-bottom:12px;">
+                    <button id="addLineBtn">➕ 添加线路</button>
+                    <button id="editLineBtn">✏️ 编辑线路</button>
+                    <button id="deleteLineBtn">🗑️ 删除线路</button>
+                    <button id="orderLineBtn">↗️ 调整顺序</button>
+                </div>
+                <div class="section-title">🏢 运营集团管理</div>
+                <div id="operatorListAdmin" class="item-list"></div>
+                <div style="margin-bottom:12px;">
+                    <button id="addOperatorBtn">➕ 添加集团</button>
+                    <button id="deleteOperatorBtn">🗑️ 删除集团</button>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div id="modal" class="modal">
+    <div class="modal-content">
+        <span class="close">&times;</span>
+        <div id="modalBody"></div>
+        <div class="modal-footer">
+            <button id="modalConfirm">确认</button>
+            <button id="modalCancel">取消</button>
+        </div>
+    </div>
+</div>
+
+<script>
+    const SUPABASE_URL = 'https://yvguuhtqjvdzpgunvbfm.supabase.co';
+    const SUPABASE_ANON_KEY = 'sb_publishable_RM2OJolzxQ3OqpZx7eHXgA_eLZNigDn';
+    const sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+
+    let currentDimension = '主世界';
+    let stations = [];
+    let lines = [];
+    let operators = [];
+    let tooltipDiv = null;
+    let svg = null;
+    let viewBox = { x: 0, y: 0, width: 800, height: 600 };
+    let isPanning = false;
+    let startPoint = { x: 0, y: 0 };
+    let startViewBox = { x: 0, y: 0 };
+
+    function showModal(title, bodyHtml, onConfirm) {
+        const modal = document.getElementById('modal');
+        const modalBody = document.getElementById('modalBody');
+        modalBody.innerHTML = `<h3>${title}</h3>${bodyHtml}`;
+        modal.style.display = 'flex';
+        const confirmBtn = document.getElementById('modalConfirm');
+        const cancelBtn = document.getElementById('modalCancel');
+        confirmBtn.onclick = async () => {
+            if (onConfirm) await onConfirm();
+            closeModal();
+        };
+        cancelBtn.onclick = closeModal;
+        document.querySelector('.modal .close').onclick = closeModal;
+        window.onclick = (e) => { if (e.target === modal) closeModal(); };
+    }
+    function closeModal() { document.getElementById('modal').style.display = 'none'; }
+
+    // 核心修改：加载数据前清空旧数据，确保切换维度后地图清空
+    async function loadData() {
+        // 先清空现有数据，避免残留
+        stations = [];
+        lines = [];
+        // 清空 SVG，立即显示空白（避免用户看到旧图）
+        if (svg) {
+            svg.innerHTML = '';
+        }
+        // 同时清空管理列表
+        const stationListAdmin = document.getElementById('stationListAdmin');
+        if (stationListAdmin) stationListAdmin.innerHTML = '';
+        const lineListAdmin = document.getElementById('lineListAdmin');
+        if (lineListAdmin) lineListAdmin.innerHTML = '';
+
+        const { data: stationsData, error: sErr } = await sb
+            .from('stations')
+            .select('*')
+            .eq('dimension', currentDimension);
+        const { data: linesData, error: lErr } = await sb
+            .from('lines')
+            .select('*')
+            .eq('dimension', currentDimension);
+        const { data: operatorsData, error: oErr } = await sb.from('operators').select('*');
+
+        if (!sErr) stations = stationsData || [];
+        if (!lErr) lines = linesData || [];
+        if (!oErr) operators = operatorsData || [];
+
+        updateStationDatalist();
+        renderMap();
+        renderAdminLists();
+    }
+
+    function updateStationDatalist() {
+        const datalist = document.getElementById('stationList');
+        datalist.innerHTML = '';
+        stations.forEach(s => {
+            const opt = document.createElement('option');
+            opt.value = s.name;
+            datalist.appendChild(opt);
+        });
+    }
+
+    function renderMap() {
+        if (!svg) svg = document.getElementById('subwayMap');
+        if (!stations.length) {
+            // 无数据时保持空白，不清除 viewBox 以免缩放失效
+            svg.innerHTML = '';
+            return;
+        }
+
+        let minX = Infinity, maxX = -Infinity, minZ = Infinity, maxZ = -Infinity;
+        stations.forEach(s => {
+            minX = Math.min(minX, s.x);
+            maxX = Math.max(maxX, s.x);
+            minZ = Math.min(minZ, s.z);
+            maxZ = Math.max(maxZ, s.z);
+        });
+        const padding = 60;
+        const rangeX = maxX - minX || 1;
+        const rangeZ = maxZ - minZ || 1;
+        if (!viewBox.width || viewBox.width === 800) {
+            viewBox = {
+                x: minX - padding,
+                y: minZ - padding,
+                width: rangeX + 2 * padding,
+                height: rangeZ + 2 * padding
+            };
+            updateViewBox();
+        }
+        svg.innerHTML = '';
+        const linesGroup = document.createElementNS('http://www.w3.org/2000/svg', 'g');
+        const stationsGroup = document.createElementNS('http://www.w3.org/2000/svg', 'g');
+        lines.forEach(line => {
+            const order = line.station_order;
+            for (let i = 0; i < order.length - 1; i++) {
+                const from = stations.find(s => s.id === order[i]);
+                const to = stations.find(s => s.id === order[i+1]);
+                if (from && to) {
+                    const lineElem = document.createElementNS('http://www.w3.org/2000/svg', 'line');
+                    lineElem.setAttribute('x1', from.x);
+                    lineElem.setAttribute('y1', from.z);
+                    lineElem.setAttribute('x2', to.x);
+                    lineElem.setAttribute('y2', to.z);
+                    lineElem.setAttribute('stroke', line.color);
+                    lineElem.setAttribute('stroke-width', '5');
+                    lineElem.setAttribute('stroke-linecap', 'round');
+                    if (line.type === '单轨铁路') lineElem.setAttribute('stroke-dasharray', '8 4');
+                    else if (line.type === '蓝冰船') lineElem.setAttribute('stroke-dasharray', '2 6');
+                    else if (line.type === '长距铁路') lineElem.setAttribute('stroke-width', '3');
+                    linesGroup.appendChild(lineElem);
+                }
+            }
+        });
+        stations.forEach(station => {
+            const circle = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
+            circle.setAttribute('cx', station.x);
+            circle.setAttribute('cy', station.z);
+            circle.setAttribute('r', '6');
+            circle.setAttribute('fill', 'white');
+            circle.setAttribute('stroke', '#2c3e66');
+            circle.setAttribute('stroke-width', '2');
+            circle.style.cursor = 'pointer';
+            circle.addEventListener('mouseenter', (e) => {
+                const linesThrough = lines.filter(line => line.station_order.includes(station.id));
+                const linesInfo = linesThrough.map(l => `${l.name} (${l.type}, ${l.operator || '未知集团'})`).join(', ');
+                tooltipDiv.innerHTML = `🚉 ${station.name}<br>坐标: X=${station.x}, Z=${station.z}<br>🔄 途经线路: ${linesInfo || '无'}`;
+                tooltipDiv.style.left = (e.pageX + 12) + 'px';
+                tooltipDiv.style.top = (e.pageY - 30) + 'px';
+                tooltipDiv.style.display = 'block';
+            });
+            circle.addEventListener('mousemove', (e) => {
+                tooltipDiv.style.left = (e.pageX + 12) + 'px';
+                tooltipDiv.style.top = (e.pageY - 30) + 'px';
+            });
+            circle.addEventListener('mouseleave', () => { tooltipDiv.style.display = 'none'; });
+            stationsGroup.appendChild(circle);
+            const text = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+            text.setAttribute('x', station.x + 8);
+            text.setAttribute('y', station.z - 4);
+            text.setAttribute('font-size', '12');
+            text.setAttribute('fill', '#1e3c72');
+            text.setAttribute('stroke', 'white');
+            text.setAttribute('stroke-width', '0.5');
+            text.textContent = station.name;
+            stationsGroup.appendChild(text);
+        });
+        svg.appendChild(linesGroup);
+        svg.appendChild(stationsGroup);
+    }
+
+    function initPanZoom() {
+        svg = document.getElementById('subwayMap');
+        const container = document.getElementById('svgWrapper');
+        container.addEventListener('wheel', (e) => {
+            e.preventDefault();
+            const delta = e.deltaY > 0 ? 1.1 : 0.9;
+            const rect = container.getBoundingClientRect();
+            const mouseX = e.clientX - rect.left;
+            const mouseY = e.clientY - rect.top;
+            const scaleX = viewBox.width / rect.width;
+            const scaleY = viewBox.height / rect.height;
+            const svgX = viewBox.x + mouseX * scaleX;
+            const svgY = viewBox.y + mouseY * scaleY;
+            let newWidth = viewBox.width * delta;
+            let newHeight = viewBox.height * delta;
+            newWidth = Math.min(2000, Math.max(200, newWidth));
+            newHeight = Math.min(1500, Math.max(150, newHeight));
+            viewBox.x = svgX - (mouseX * (newWidth / rect.width));
+            viewBox.y = svgY - (mouseY * (newHeight / rect.height));
+            viewBox.width = newWidth;
+            viewBox.height = newHeight;
+            updateViewBox();
+        });
+        container.addEventListener('mousedown', (e) => {
+            if (e.target === svg || e.target.closest('svg')) {
+                isPanning = true;
+                startPoint = { x: e.clientX, y: e.clientY };
+                startViewBox = { x: viewBox.x, y: viewBox.y };
+                container.style.cursor = 'grabbing';
+                e.preventDefault();
+            }
+        });
+        window.addEventListener('mousemove', (e) => {
+            if (!isPanning) return;
+            const dx = e.clientX - startPoint.x;
+            const dy = e.clientY - startPoint.y;
+            const scaleX = viewBox.width / container.clientWidth;
+            const scaleY = viewBox.height / container.clientHeight;
+            viewBox.x = startViewBox.x - dx * scaleX;
+            viewBox.y = startViewBox.y - dy * scaleY;
+            updateViewBox();
+        });
+        window.addEventListener('mouseup', () => { isPanning = false; container.style.cursor = 'grab'; });
+    }
+    function updateViewBox() { svg.setAttribute('viewBox', `${viewBox.x} ${viewBox.y} ${viewBox.width} ${viewBox.height}`); }
+
+    async function planRoute() {
+        const start = document.getElementById('startStation').value.trim();
+        const end = document.getElementById('endStation').value.trim();
+        if (!start || !end) { alert('请填写起点和终点'); return; }
+        const graph = {};
+        lines.forEach(line => {
+            const order = line.station_order;
+            for (let i = 0; i < order.length - 1; i++) {
+                const a = order[i], b = order[i+1];
+                if (!graph[a]) graph[a] = [];
+                if (!graph[b]) graph[b] = [];
+                graph[a].push(b);
+                graph[b].push(a);
+            }
+        });
+        const startStation = stations.find(s => s.name === start);
+        const endStation = stations.find(s => s.name === end);
+        if (!startStation || !endStation) { alert('站点不存在'); return; }
+        const queue = [[startStation.id]];
+        const visited = new Set([startStation.id]);
+        let pathIds = null;
+        while (queue.length) {
+            const path = queue.shift();
+            const node = path[path.length-1];
+            if (node === endStation.id) { pathIds = path; break; }
+            for (const neighbor of graph[node] || []) {
+                if (!visited.has(neighbor)) {
+                    visited.add(neighbor);
+                    queue.push([...path, neighbor]);
+                }
+            }
+        }
+        if (!pathIds) { document.getElementById('planResult').innerHTML = '<span style="color:red">❌ 未找到路径</span>'; return; }
+        const pathStations = pathIds.map(id => stations.find(s => s.id === id));
+        let html = `<strong>✅ 最短路径 (${pathStations.length}站)</strong><br>`;
+        html += pathStations.map((p, i) => `${i+1}. ${p.name}`).join('<br>');
+        const transfers = [];
+        for (let i = 1; i < pathStations.length-1; i++) {
+            const prevLines = lines.filter(l => l.station_order.includes(pathStations[i-1].id)).map(l => l.name);
+            const currLines = lines.filter(l => l.station_order.includes(pathStations[i].id)).map(l => l.name);
+            const nextLines = lines.filter(l => l.station_order.includes(pathStations[i+1].id)).map(l => l.name);
+            if (currLines.length > 1 && prevLines.some(l => currLines.includes(l)) && nextLines.some(l => currLines.includes(l))) {
+                transfers.push(pathStations[i].name);
+            }
+        }
+        if (transfers.length) html += `<br><span style="color:#e67e22;">🔄 换乘站: ${transfers.join(', ')}</span>`;
+        document.getElementById('planResult').innerHTML = html;
+    }
+
+    async function renderAdminLists() {
+        const stationDiv = document.getElementById('stationListAdmin');
+        stationDiv.innerHTML = '';
+        stations.forEach(s => {
+            const div = document.createElement('div');
+            div.className = 'station-item';
+            div.innerHTML = `<strong>${s.name}</strong> (${s.x}, ${s.z})<span>ID: ${s.id}</span>`;
+            stationDiv.appendChild(div);
+        });
+        const lineDiv = document.getElementById('lineListAdmin');
+        lineDiv.innerHTML = '';
+        lines.forEach(l => {
+            const stationNames = l.station_order.map(id => stations.find(s => s.id === id)?.name).join(' → ');
+            const div = document.createElement('div');
+            div.className = 'line-item';
+            div.innerHTML = `<div><span class="color-preview" style="background:${l.color};"></span><strong>${l.name}</strong> (${l.type})<br><small>运营集团: ${l.operator || '无'} | 站点: ${stationNames}</small></div>`;
+            lineDiv.appendChild(div);
+        });
+        const operatorDiv = document.getElementById('operatorListAdmin');
+        operatorDiv.innerHTML = '';
+        operators.forEach(op => {
+            const div = document.createElement('div');
+            div.className = 'operator-item';
+            div.innerHTML = `<strong>${op.name}</strong><span>ID: ${op.id}</span>`;
+            operatorDiv.appendChild(div);
+        });
+    }
+
+    async function addStation() {
+        showModal('添加站点', `
+            <label>站名</label><input id="staName">
+            <label>X坐标</label><input id="staX" value="0">
+            <label>Z坐标</label><input id="staZ" value="0">
+        `, async () => {
+            const name = document.getElementById('staName').value;
+            const x = parseFloat(document.getElementById('staX').value);
+            const z = parseFloat(document.getElementById('staZ').value);
+            if (!name || isNaN(x) || isNaN(z)) { alert('请填写完整'); return; }
+            const { error } = await sb.from('stations').insert([{
+                name, x, z,
+                dimension: currentDimension
+            }]);
+            if (error) alert(error.message);
+            else { alert('添加成功'); closeModal(); await loadData(); }
+        });
+    }
+    async function editStation() {
+        if (!stations.length) { alert('暂无站点'); return; }
+        showModal('编辑站点', `
+            <label>选择站点</label>
+            <select id="staId">${stations.map(s => `<option value="${s.id}">${s.name}</option>`).join('')}</select>
+            <label>新站名</label><input id="staName">
+            <label>新X坐标</label><input id="staX">
+            <label>新Z坐标</label><input id="staZ">
+        `, async () => {
+            const id = document.getElementById('staId').value;
+            const name = document.getElementById('staName').value;
+            const x = parseFloat(document.getElementById('staX').value);
+            const z = parseFloat(document.getElementById('staZ').value);
+            if (!name || isNaN(x) || isNaN(z)) { alert('请填写完整'); return; }
+            const { error } = await sb.from('stations').update({ name, x, z }).eq('id', id);
+            if (error) alert(error.message);
+            else { alert('编辑成功'); closeModal(); await loadData(); }
+        });
+        const select = document.getElementById('staId');
+        const loadStation = () => {
+            const s = stations.find(s => s.id == select.value);
+            if (s) {
+                document.getElementById('staName').value = s.name;
+                document.getElementById('staX').value = s.x;
+                document.getElementById('staZ').value = s.z;
+            }
+        };
+        select.onchange = loadStation;
+        loadStation();
+    }
+    async function deleteStation() {
+        if (!stations.length) { alert('暂无站点'); return; }
+        showModal('删除站点', `<label>选择站点</label><select id="staId">${stations.map(s => `<option value="${s.id}">${s.name}</option>`).join('')}</select>`, async () => {
+            const id = document.getElementById('staId').value;
+            if (!confirm('删除站点将从所有线路中移除，确定吗？')) return;
+            for (const line of lines) {
+                if (line.station_order.includes(parseInt(id))) {
+                    const newOrder = line.station_order.filter(sid => sid != id);
+                    await sb.from('lines').update({ station_order: newOrder }).eq('id', line.id);
+                }
+            }
+            const { error } = await sb.from('stations').delete().eq('id', id);
+            if (error) alert(error.message);
+            else { alert('删除成功'); closeModal(); await loadData(); }
+        });
+    }
+
+    async function addLine() {
+        const lineTypes = ['单轨铁路', '双轨铁路', '蓝冰船', '长距铁路'];
+        const stationOptions = stations.map(s => `<option value="${s.id}">${s.name}</option>`).join('');
+        const operatorOptions = operators.map(op => `<option value="${op.name}">${op.name}</option>`).join('');
+        showModal('添加线路', `
+            <label>线路名称</label><input id="lineName">
+            <label>线路类型</label><select id="lineType">${lineTypes.map(t => `<option value="${t}">${t}</option>`).join('')}</select>
+            <label>线路颜色</label><input type="color" id="lineColor" value="#888888">
+            <label>运营集团</label><select id="operator"><option value="">无</option>${operatorOptions}</select>
+            <label>站点顺序 (按住Ctrl多选，按顺序点击选择)</label>
+            <select id="stationOrderSelect" multiple size="6">${stationOptions}</select>
+            <small>提示：按顺序依次点击选择站点，选中顺序即为线路顺序。</small>
+        `, async () => {
+            const name = document.getElementById('lineName').value;
+            const type = document.getElementById('lineType').value;
+            const color = document.getElementById('lineColor').value;
+            const operator = document.getElementById('operator').value;
+            const selected = Array.from(document.getElementById('stationOrderSelect').selectedOptions);
+            const station_order = selected.map(opt => parseInt(opt.value));
+            if (!name || !type || !color) { alert('请填写完整'); return; }
+            if (station_order.length < 2) { alert('至少选择两个站点'); return; }
+            const { error } = await sb.from('lines').insert([{
+                name, station_order, type, color, operator,
+                dimension: currentDimension
+            }]);
+            if (error) alert(error.message);
+            else { alert('添加成功'); closeModal(); await loadData(); }
+        });
+    }
+    async function editLine() {
+        if (!lines.length) { alert('暂无线路'); return; }
+        const lineTypes = ['单轨铁路', '双轨铁路', '蓝冰船', '长距铁路'];
+        const stationOptions = stations.map(s => `<option value="${s.id}">${s.name}</option>`).join('');
+        const operatorOptions = operators.map(op => `<option value="${op.name}">${op.name}</option>`).join('');
+        showModal('编辑线路', `
+            <label>选择线路</label>
+            <select id="lineId">${lines.map(l => `<option value="${l.id}">${l.name}</option>`).join('')}</select>
+            <label>线路名称</label><input id="lineName">
+            <label>线路类型</label><select id="lineType">${lineTypes.map(t => `<option value="${t}">${t}</option>`).join('')}</select>
+            <label>线路颜色</label><input type="color" id="lineColor">
+            <label>运营集团</label><select id="operator"><option value="">无</option>${operatorOptions}</select>
+            <label>站点顺序 (按住Ctrl多选，按顺序点击选择)</label>
+            <select id="stationOrderSelect" multiple size="6">${stationOptions}</select>
+        `, async () => {
+            const id = document.getElementById('lineId').value;
+            const name = document.getElementById('lineName').value;
+            const type = document.getElementById('lineType').value;
+            const color = document.getElementById('lineColor').value;
+            const operator = document.getElementById('operator').value;
+            const selected = Array.from(document.getElementById('stationOrderSelect').selectedOptions);
+            const station_order = selected.map(opt => parseInt(opt.value));
+            if (!name || !type || !color) { alert('请填写完整'); return; }
+            if (station_order.length < 2) { alert('至少选择两个站点'); return; }
+            const { error } = await sb.from('lines').update({ name, station_order, type, color, operator }).eq('id', id);
+            if (error) alert(error.message);
+            else { alert('编辑成功'); closeModal(); await loadData(); }
+        });
+        const select = document.getElementById('lineId');
+        const loadLine = () => {
+            const line = lines.find(l => l.id == select.value);
+            if (line) {
+                document.getElementById('lineName').value = line.name;
+                document.getElementById('lineType').value = line.type;
+                document.getElementById('lineColor').value = line.color;
+                document.getElementById('operator').value = line.operator || '';
+                const stationSelect = document.getElementById('stationOrderSelect');
+                for (let opt of stationSelect.options) {
+                    opt.selected = line.station_order.includes(parseInt(opt.value));
+                }
+            }
+        };
+        select.onchange = loadLine;
+        loadLine();
+    }
+    async function deleteLine() {
+        if (!lines.length) { alert('暂无线路'); return; }
+        showModal('删除线路', `<label>选择线路</label><select id="lineId">${lines.map(l => `<option value="${l.id}">${l.name}</option>`).join('')}</select>`, async () => {
+            const id = document.getElementById('lineId').value;
+            if (!confirm('确定删除该线路吗？')) return;
+            const { error } = await sb.from('lines').delete().eq('id', id);
+            if (error) alert(error.message);
+            else { alert('删除成功'); closeModal(); await loadData(); }
+        });
+    }
+    async function orderLine() {
+        if (!lines.length) { alert('暂无线路'); return; }
+        showModal('调整线路站点顺序', `
+            <label>选择线路</label>
+            <select id="lineSelect">${lines.map(l => `<option value="${l.id}">${l.name}</option>`).join('')}</select>
+            <div id="orderContainer"></div>
+        `, null, true);
+        const lineSelect = document.getElementById('lineSelect');
+        const orderContainer = document.getElementById('orderContainer');
+        let currentOrder = [];
+        function renderOrder(stationIds) {
+            const stationsInOrder = stationIds.map(id => stations.find(s => s.id === id)).filter(s => s);
+            orderContainer.innerHTML = `
+                <div style="margin:10px 0;">
+                    ${stationsInOrder.map((s, idx) => `
+                        <div style="display:flex; justify-content:space-between; margin:6px 0; padding:6px; background:#f5f5f5; border-radius:8px;">
+                            <span><strong>${idx+1}.</strong> ${s.name}</span>
+                            <div>
+                                <button class="small-btn upBtn" data-idx="${idx}" ${idx===0 ? 'disabled' : ''}>▲</button>
+                                <button class="small-btn downBtn" data-idx="${idx}" ${idx===stationIds.length-1 ? 'disabled' : ''}>▼</button>
+                            </div>
+                        </div>
+                    `).join('')}
+                </div>
+                <button id="saveOrderBtn" class="small-btn">保存顺序</button>
+            `;
+            document.querySelectorAll('.upBtn').forEach(btn => {
+                btn.onclick = () => {
+                    const idx = parseInt(btn.dataset.idx);
+                    if (idx > 0) {
+                        [stationIds[idx-1], stationIds[idx]] = [stationIds[idx], stationIds[idx-1]];
+                        renderOrder(stationIds);
+                    }
+                };
+            });
+            document.querySelectorAll('.downBtn').forEach(btn => {
+                btn.onclick = () => {
+                    const idx = parseInt(btn.dataset.idx);
+                    if (idx < stationIds.length-1) {
+                        [stationIds[idx], stationIds[idx+1]] = [stationIds[idx+1], stationIds[idx]];
+                        renderOrder(stationIds);
+                    }
+                };
+            });
+            document.getElementById('saveOrderBtn').onclick = async () => {
+                const { error } = await sb.from('lines').update({ station_order: stationIds }).eq('id', lineSelect.value);
+                if (error) alert(error.message);
+                else { alert('顺序已更新'); closeModal(); await loadData(); }
+            };
+        }
+        lineSelect.onchange = () => {
+            const line = lines.find(l => l.id == lineSelect.value);
+            if (line) { currentOrder = [...line.station_order]; renderOrder(currentOrder); }
+        };
+        lineSelect.dispatchEvent(new Event('change'));
+    }
+
+    async function addOperator() {
+        showModal('添加运营集团', `<label>集团名称</label><input id="opName">`, async () => {
+            const name = document.getElementById('opName').value.trim();
+            if (!name) { alert('请填写名称'); return; }
+            const { error } = await sb.from('operators').insert([{ name }]);
+            if (error) alert(error.message);
+            else { alert('添加成功'); closeModal(); await loadData(); }
+        });
+    }
+    async function deleteOperator() {
+        if (!operators.length) { alert('暂无集团'); return; }
+        showModal('删除运营集团', `<label>选择集团</label><select id="opSelect">${operators.map(op => `<option value="${op.id}">${op.name}</option>`).join('')}</select>`, async () => {
+            const id = document.getElementById('opSelect').value;
+            const used = lines.some(l => l.operator === operators.find(op => op.id == id)?.name);
+            if (used) { alert('该集团仍被线路使用，无法删除'); return; }
+            const { error } = await sb.from('operators').delete().eq('id', id);
+            if (error) alert(error.message);
+            else { alert('删除成功'); closeModal(); await loadData(); }
+        });
+    }
+
+    async function changeDimension() {
+        currentDimension = document.getElementById('dimensionSelect').value;
+        await loadData();
+    }
+
+    function bindEvents() {
+        document.getElementById('planBtn').onclick = planRoute;
+        document.getElementById('refreshBtn').onclick = changeDimension;
+        document.getElementById('addStationBtn').onclick = addStation;
+        document.getElementById('editStationBtn').onclick = editStation;
+        document.getElementById('deleteStationBtn').onclick = deleteStation;
+        document.getElementById('addLineBtn').onclick = addLine;
+        document.getElementById('editLineBtn').onclick = editLine;
+        document.getElementById('deleteLineBtn').onclick = deleteLine;
+        document.getElementById('orderLineBtn').onclick = orderLine;
+        document.getElementById('addOperatorBtn').onclick = addOperator;
+        document.getElementById('deleteOperatorBtn').onclick = deleteOperator;
+    }
+
+    async function init() {
+        initPanZoom();
+        tooltipDiv = document.createElement('div');
+        tooltipDiv.className = 'tooltip';
+        document.body.appendChild(tooltipDiv);
+        await loadData();
+        bindEvents();
+    }
+    init();
+</script>
+</body>
+</html>
