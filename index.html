@@ -6,8 +6,7 @@
     <title>巧克力服铁路线路图 Chocolate Server Railway Map</title>
     <link rel="manifest" href="/manifest.json">
     <meta name="theme-color" content="#ff9800">
-    <meta name="apple-mobile-web-app-capable" content="yes">
-    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <meta name="mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-title" content="巧克力铁路图">
     <link rel="apple-touch-icon" href="/icon-192.png">
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
@@ -46,6 +45,19 @@
         .coord-input { display: inline-flex; gap: 8px; align-items: center; }
         .coord-input input { width: 80px; padding: 4px 8px; border-radius: 16px; border: 1px solid #ccc; }
         #coordDisplay { background: #e9ecef; border-radius: 20px; padding: 4px 12px; font-size: 12px; }
+        .modal-content label {
+        display: block;
+        margin-bottom: 8px;
+        }
+        .modal-content label input[type="checkbox"] {
+            display: inline-block;
+            width: auto;
+            margin-right: 8px;
+            vertical-align: middle;
+        }
+        .modal-content label span {
+            vertical-align: middle;
+        }
     </style>
 </head>
 <body>
@@ -68,7 +80,6 @@
                 </select>
                 <button id="refreshBtn">切换</button>
             </div>
-            <!-- 新增辅助控件栏 -->
             <div class="aux-controls">
                 <label>
                     <input type="checkbox" id="showGridCheckbox"> 显示坐标网格
@@ -88,7 +99,7 @@
                 <svg id="subwayMap" width="100%" height="100%"></svg>
             </div>
             <div class="map-controls">
-                <span>💡 鼠标滚轮缩放 | 拖拽平移 | 悬停查看详情 | by woshiikun_1145 | Version 032807</span>
+                <span>💡 鼠标滚轮缩放 | 拖拽平移 | 悬停查看详情 | by woshiikun_1145 | Version 033002</span>
             </div>
         </div>
         <div class="sidebar">
@@ -156,7 +167,6 @@
     let startPoint = { x: 0, y: 0 };
     let startViewBox = { x: 0, y: 0 };
 
-    // 新增：辅助元素状态
     let showGrid = false;
     let showAxes = false;
 
@@ -180,24 +190,17 @@
     // 绘制辅助元素（网格和坐标轴）
     function drawAuxiliaryElements() {
         if (!svg) return;
-        // 如果不需要显示，则直接返回（但为了不覆盖原有内容，我们不在 renderMap 中清空，而是先绘制辅助再绘制其他）
-        // 注意：此函数会在 renderMap 开始时被调用，并且会先清空 svg，所以我们在 renderMap 中先调用本函数，再绘制线路和站点
         if (!showGrid && !showAxes) return;
-
-        // 计算网格间距（根据视图范围动态调整，避免过密）
         let step = 100;
         const range = Math.max(viewBox.width, viewBox.height);
         if (range > 2000) step = 500;
         else if (range > 1000) step = 200;
         else if (range > 500) step = 100;
         else step = 50;
-
         const startX = Math.floor(viewBox.x / step) * step;
         const startZ = Math.floor(viewBox.y / step) * step;
         const endX = viewBox.x + viewBox.width;
         const endZ = viewBox.y + viewBox.height;
-
-        // 网格线
         if (showGrid) {
             for (let x = startX; x <= endX; x += step) {
                 const line = document.createElementNS('http://www.w3.org/2000/svg', 'line');
@@ -222,10 +225,7 @@
                 svg.appendChild(line);
             }
         }
-
-        // 坐标轴
         if (showAxes) {
-            // X轴 (Z=0) 用红色
             if (0 >= viewBox.y && 0 <= viewBox.y + viewBox.height) {
                 const xAxis = document.createElementNS('http://www.w3.org/2000/svg', 'line');
                 xAxis.setAttribute('x1', viewBox.x);
@@ -236,7 +236,6 @@
                 xAxis.setAttribute('stroke-width', '2');
                 svg.appendChild(xAxis);
             }
-            // Z轴 (X=0) 用蓝色
             if (0 >= viewBox.x && 0 <= viewBox.x + viewBox.width) {
                 const zAxis = document.createElementNS('http://www.w3.org/2000/svg', 'line');
                 zAxis.setAttribute('x1', 0);
@@ -250,7 +249,6 @@
         }
     }
 
-    // 加载数据前清空旧数据，确保切换维度后地图清空
     async function loadData() {
         stations = [];
         lines = [];
@@ -292,13 +290,9 @@
     function renderMap() {
         if (!svg) svg = document.getElementById('subwayMap');
         svg.innerHTML = '';
-        // 先绘制辅助元素（网格、坐标轴）
         drawAuxiliaryElements();
 
-        if (!stations.length) {
-            // 无数据时只显示辅助元素（如果有）
-            return;
-        }
+        if (!stations.length) return;
 
         let minX = Infinity, maxX = -Infinity, minZ = Infinity, maxZ = -Infinity;
         stations.forEach(s => {
@@ -322,8 +316,10 @@
 
         const linesGroup = document.createElementNS('http://www.w3.org/2000/svg', 'g');
         const stationsGroup = document.createElementNS('http://www.w3.org/2000/svg', 'g');
+
         lines.forEach(line => {
             const order = line.station_order;
+            // 绘制顺序连接
             for (let i = 0; i < order.length - 1; i++) {
                 const from = stations.find(s => s.id === order[i]);
                 const to = stations.find(s => s.id === order[i+1]);
@@ -342,7 +338,27 @@
                     linesGroup.appendChild(lineElem);
                 }
             }
+            // 如果是环线，绘制首尾连接
+            if (line.is_loop && order.length >= 2) {
+                const first = stations.find(s => s.id === order[0]);
+                const last = stations.find(s => s.id === order[order.length - 1]);
+                if (first && last) {
+                    const loopLine = document.createElementNS('http://www.w3.org/2000/svg', 'line');
+                    loopLine.setAttribute('x1', last.x);
+                    loopLine.setAttribute('y1', last.z);
+                    loopLine.setAttribute('x2', first.x);
+                    loopLine.setAttribute('y2', first.z);
+                    loopLine.setAttribute('stroke', line.color);
+                    loopLine.setAttribute('stroke-width', '5');
+                    loopLine.setAttribute('stroke-linecap', 'round');
+                    if (line.type === '单轨铁路') loopLine.setAttribute('stroke-dasharray', '8 4');
+                    else if (line.type === '蓝冰船') loopLine.setAttribute('stroke-dasharray', '2 6');
+                    else if (line.type === '长距铁路') loopLine.setAttribute('stroke-width', '3');
+                    linesGroup.appendChild(loopLine);
+                }
+            }
         });
+
         stations.forEach(station => {
             const circle = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
             circle.setAttribute('cx', station.x);
@@ -402,7 +418,6 @@
             viewBox.width = newWidth;
             viewBox.height = newHeight;
             updateViewBox();
-            // 缩放后重绘辅助元素和地图（为了性能，仅重绘辅助元素和地图）
             renderMap();
         });
         container.addEventListener('mousedown', (e) => {
@@ -426,8 +441,6 @@
             renderMap();
         });
         window.addEventListener('mouseup', () => { isPanning = false; container.style.cursor = 'grab'; });
-
-        // 添加点击事件获取坐标
         svg.addEventListener('click', (e) => {
             const rect = svg.getBoundingClientRect();
             const mouseX = e.clientX - rect.left;
@@ -439,10 +452,9 @@
             document.getElementById('coordDisplay').innerHTML = `点击坐标: X=${worldX.toFixed(1)}, Z=${worldZ.toFixed(1)}`;
         });
     }
-    function updateViewBox() {
-        svg.setAttribute('viewBox', `${viewBox.x} ${viewBox.y} ${viewBox.width} ${viewBox.height}`);
-    }
+    function updateViewBox() { svg.setAttribute('viewBox', `${viewBox.x} ${viewBox.y} ${viewBox.width} ${viewBox.height}`); }
 
+    // 路线规划（含环线）
     async function planRoute() {
         const start = document.getElementById('startStation').value.trim();
         const end = document.getElementById('endStation').value.trim();
@@ -456,6 +468,14 @@
                 if (!graph[b]) graph[b] = [];
                 graph[a].push(b);
                 graph[b].push(a);
+            }
+            if (line.is_loop && order.length >= 2) {
+                const first = order[0];
+                const last = order[order.length - 1];
+                if (!graph[first]) graph[first] = [];
+                if (!graph[last]) graph[last] = [];
+                graph[first].push(last);
+                graph[last].push(first);
             }
         });
         const startStation = stations.find(s => s.name === start);
@@ -505,9 +525,10 @@
         lineDiv.innerHTML = '';
         lines.forEach(l => {
             const stationNames = l.station_order.map(id => stations.find(s => s.id === id)?.name).join(' → ');
+            const loopIcon = l.is_loop ? '🔄 ' : '';
             const div = document.createElement('div');
             div.className = 'line-item';
-            div.innerHTML = `<div><span class="color-preview" style="background:${l.color};"></span><strong>${l.name}</strong> (${l.type})<br><small>运营集团: ${l.operator || '无'} | 站点: ${stationNames}</small></div>`;
+            div.innerHTML = `<div><span class="color-preview" style="background:${l.color};"></span>${loopIcon}<strong>${l.name}</strong> (${l.type})<br><small>运营集团: ${l.operator || '无'} | 站点: ${stationNames}</small></div>`;
             lineDiv.appendChild(div);
         });
         const operatorDiv = document.getElementById('operatorListAdmin');
@@ -594,21 +615,27 @@
             <label>线路类型</label><select id="lineType">${lineTypes.map(t => `<option value="${t}">${t}</option>`).join('')}</select>
             <label>线路颜色</label><input type="color" id="lineColor" value="#888888">
             <label>运营集团</label><select id="operator"><option value="">无</option>${operatorOptions}</select>
+            <label>
+    <input type="checkbox" id="isLoopCheckbox">
+    <span>环线（首尾相连）</span>
+</label>
             <label>站点顺序 (按住Ctrl多选，按顺序点击选择)</label>
             <select id="stationOrderSelect" multiple size="6">${stationOptions}</select>
-            <small>提示：按顺序依次点击选择站点，选中顺序即为线路顺序。</small>
+            <small>提示：按顺序依次点击选择站点，选中顺序即为线路顺序。环线会自动连接首尾。</small>
         `, async () => {
             const name = document.getElementById('lineName').value;
             const type = document.getElementById('lineType').value;
             const color = document.getElementById('lineColor').value;
             const operator = document.getElementById('operator').value;
+            const isLoop = document.getElementById('isLoopCheckbox').checked;
             const selected = Array.from(document.getElementById('stationOrderSelect').selectedOptions);
             const station_order = selected.map(opt => parseInt(opt.value));
             if (!name || !type || !color) { alert('请填写完整'); return; }
             if (station_order.length < 2) { alert('至少选择两个站点'); return; }
             const { error } = await sb.from('lines').insert([{
                 name, station_order, type, color, operator,
-                dimension: currentDimension
+                dimension: currentDimension,
+                is_loop: isLoop
             }]);
             if (error) alert(error.message);
             else { alert('添加成功'); closeModal(); await loadData(); }
@@ -626,6 +653,7 @@
             <label>线路类型</label><select id="lineType">${lineTypes.map(t => `<option value="${t}">${t}</option>`).join('')}</select>
             <label>线路颜色</label><input type="color" id="lineColor">
             <label>运营集团</label><select id="operator"><option value="">无</option>${operatorOptions}</select>
+            <label><input type="checkbox" id="isLoopCheckbox"> 环线（首尾相连）</label>
             <label>站点顺序 (按住Ctrl多选，按顺序点击选择)</label>
             <select id="stationOrderSelect" multiple size="6">${stationOptions}</select>
         `, async () => {
@@ -634,11 +662,15 @@
             const type = document.getElementById('lineType').value;
             const color = document.getElementById('lineColor').value;
             const operator = document.getElementById('operator').value;
+            const isLoop = document.getElementById('isLoopCheckbox').checked;
             const selected = Array.from(document.getElementById('stationOrderSelect').selectedOptions);
             const station_order = selected.map(opt => parseInt(opt.value));
             if (!name || !type || !color) { alert('请填写完整'); return; }
             if (station_order.length < 2) { alert('至少选择两个站点'); return; }
-            const { error } = await sb.from('lines').update({ name, station_order, type, color, operator }).eq('id', id);
+            const { error } = await sb.from('lines').update({
+                name, station_order, type, color, operator,
+                is_loop: isLoop
+            }).eq('id', id);
             if (error) alert(error.message);
             else { alert('编辑成功'); closeModal(); await loadData(); }
         });
@@ -650,6 +682,7 @@
                 document.getElementById('lineType').value = line.type;
                 document.getElementById('lineColor').value = line.color;
                 document.getElementById('operator').value = line.operator || '';
+                document.getElementById('isLoopCheckbox').checked = line.is_loop || false;
                 const stationSelect = document.getElementById('stationOrderSelect');
                 for (let opt of stationSelect.options) {
                     opt.selected = line.station_order.includes(parseInt(opt.value));
@@ -752,13 +785,11 @@
         await loadData();
     }
 
-    // 跳转到指定坐标
     function jumpToCoordinate() {
         let x = parseFloat(document.getElementById('jumpX').value);
         let z = parseFloat(document.getElementById('jumpZ').value);
         if (isNaN(x)) x = 0;
         if (isNaN(z)) z = 0;
-        // 将视图中心移动到 (x, z)，保持缩放不变
         const container = document.getElementById('svgWrapper');
         const rect = container.getBoundingClientRect();
         const scaleX = viewBox.width / rect.width;
@@ -783,7 +814,6 @@
         document.getElementById('deleteOperatorBtn').onclick = deleteOperator;
         document.getElementById('jumpBtn').onclick = jumpToCoordinate;
 
-        // 复选框事件
         const gridCheck = document.getElementById('showGridCheckbox');
         const axesCheck = document.getElementById('showAxesCheckbox');
         gridCheck.addEventListener('change', (e) => {
@@ -808,8 +838,7 @@
 </script>
 
 <script>
-  // Service Worker 注册（PWA）
-  if ('serviceWorker' in navigator) {
+  if ('serviceWorker' in navigator && window.isSecureContext && location.protocol.startsWith('http')) {
     navigator.serviceWorker.register('/sw.js')
       .then(reg => console.log('SW registered:', reg))
       .catch(err => console.error('SW registration failed:', err));
